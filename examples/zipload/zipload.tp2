@@ -1,0 +1,6 @@
+BACKUP ~zipload/backup~
+AUTHOR ~scott@beamdog.com~
+
+BEGIN ~zipload~
+
+COPY_EXISTING ~INBIF.2da~ ~INBIF.2DA~
