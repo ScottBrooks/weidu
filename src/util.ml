@@ -482,10 +482,112 @@ and copy_large_file name out reason =
     log_and_print "ERROR: error copying [%s]\n" name ;
     raise e
 
-let load_file name =
+type zip_eocd = {
+  signature: int;
+  disk_number: int;
+  central_disk: int;
+  central_num_disk: int;
+  central_num: int;
+  central_size: int;
+  central_offset: int;
+  comment_len: int;
+  comment: string;
+}
+
+let rec zip_read_entry fd buff offset remaining max_bytes name =
+  if remaining > 0 then
+    let zextralen = short_of_str_off buff (30 + offset) in
+    let zcommentlen = short_of_str_off buff (32 + offset) in
+    let znamelen = short_of_str_off buff (28 + offset) in
+    let zname = String.sub buff (46 + offset) znamelen in
+    let znamereg = Str.regexp_case_fold ("^" ^ zname ^ "$") in
+    let zdataoffset = int_of_str_off buff (42 + offset) in
+    let zcompsize = int_of_str_off buff (20 + offset) in
+
+    if Str.string_match znamereg name 0 then
+      let bytes_to_read = if max_bytes > 0 then
+        min max_bytes zcompsize
+      else
+        zcompsize in
+
+      let buff = String.make bytes_to_read '\000' in
+      Unix.lseek fd (zdataoffset + 30 + znamelen + zextralen) Unix.SEEK_SET;
+      my_read bytes_to_read fd buff zname ;
+      buff
+    else
+      zip_read_entry fd buff (offset + 46 + znamelen + zextralen + zcommentlen) (remaining - 1) max_bytes name
+  else
+    ""
+
+let zip_read fd name max_bytes  =
+  try
+    let filesize = Unix.lseek fd 0 Unix.SEEK_END in
+    Unix.lseek fd 0 Unix.SEEK_SET;
+    let max_eocd_size = 64 * 1024 in
+    let read_size = min filesize max_eocd_size in
+    let tail = String.make read_size '\000' in
+    let upperName = String.uppercase name in
+
+    my_read read_size fd tail name ;
+    let signature = Bytes.make 4 '\000' in
+    Bytes.set signature 0 (Char.chr 0x50);
+    Bytes.set signature 1 (Char.chr 0x4b);
+    Bytes.set signature 2 (Char.chr 0x05);
+    Bytes.set signature 3 (Char.chr 0x06);
+
+    let eocd_offset = Str.search_backward (Str.regexp signature) tail read_size in
+
+    let ecd_offset = int_of_str_off tail (eocd_offset + 16) in
+    let ecd_size = int_of_str_off tail (eocd_offset + 12) in
+    let ecd_count = short_of_str_off tail (eocd_offset + 10) in
+
+    let ecd = String.make ecd_size '\000' in
+    Unix.lseek fd ecd_offset Unix.SEEK_SET;
+
+    my_read ecd_size fd ecd name ;
+
+    zip_read_entry fd ecd 0 ecd_count max_bytes upperName
+  with e ->
+    log_and_print "ERROR Reading from zip: %s %s\n" name (Printexc.to_string e);
+    ""
+
+let load_file_internal name max_bytes =
+  let zip_regexp = (Str.regexp "zip:") in
   if Hashtbl.mem inlined_files name then
     String.copy (Hashtbl.find inlined_files (Arch.backslash_to_slash name))
-  else
+  else if Str.string_match zip_regexp name 0 then begin
+    let len = String.length name in
+    let chunks = (Str.split (Str.regexp ":") name) in
+    let zipname = List.nth chunks 1 in
+    let filename = List.nth chunks 2 in
+
+    (* Open zipname, track down filename, return those bytes *)
+    try begin
+      Stats.time "loading files" (fun () ->
+        let stats = Case_ins.unix_stat zipname in
+        let size = stats.Unix.st_size in
+        if size = 0 then
+          log_or_print_modder "WARNING: [%s] is a 0 byte file\n" zipname
+        else if size < 0 then begin
+          log_and_print "ERROR: [%s] has reported size %d\n" zipname size ;
+          failwith ("error loading " ^ zipname)
+        end ;
+        let fd = Case_ins.unix_openfile zipname [Unix.O_RDONLY] 0 in
+
+        let buff = zip_read fd filename max_bytes in
+        (try
+          Unix.close fd ;
+          with e ->
+            log_and_print "ERROR: load_file failed to close %s\n" name ;
+          raise e) ;
+        log_only "[%s] loaded, %d bytes\n" name size ;
+        buff) ();
+    end
+    with e ->
+      log_and_print "ERROR: error loading [%s]\n" name ;
+      raise e
+    failwith ("now do something with it")
+  end else
     try begin
       Stats.time "loading files" (fun () ->
 	let stats = Case_ins.unix_stat name in
@@ -514,6 +616,9 @@ let load_file name =
     with e ->
       log_and_print "ERROR: error loading [%s]\n" name ;
       raise e
+
+let load_file name =
+  load_file_internal name 0
 
 let list_of_files_in_directory d =
   let result = ref [] in 

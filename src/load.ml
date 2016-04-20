@@ -24,6 +24,8 @@ type game_type = BGEE | BG2EE | IWDEE | GENERIC
 
 let game_paths = ref []
 
+let mod_paths = ref ["dlc"]
+
 let add_game_path path = game_paths := (Str.global_replace (Str.regexp "[\\\\/]*$") "" path) :: !game_paths
 
 let override_paths = ref [
@@ -372,6 +374,19 @@ let load_null_game () =
   create_dialog_search result ;
   result
 
+let merge_mod_keys info mod_paths =
+    let key, game_path = info in
+    let newkey = List.fold_left (fun key path ->
+        let modpath = Arch.native_separator ( game_path ^ "/" ^ path ) in
+        let file = find_file_in_path modpath ".*\\.zip" in
+        if file_exists file then begin
+            Key.merge_key key file
+        end else
+            key
+    ) key mod_paths in
+
+    newkey, game_path
+
 let find_key_file game_paths =
   try
     List.iter (fun path ->
@@ -455,7 +470,7 @@ let autodetect_game_type key =
 let have_bgee_lang_dir_p = ref false
 
 let load_game () =
-  let key, gp = find_key_file !game_paths in
+  let key, gp = merge_mod_keys(find_key_file !game_paths) !mod_paths in
   let dialogs = load_dialogs gp in
   let dialog_index = 0 in
   let cd_paths = read_cd_paths gp in
@@ -582,7 +597,9 @@ let load_bif_in_game game bif_file =
           let sz = Cbif.cbf2bif (Case_ins.fix_name  cbf_file) (Case_ins.fix_name cache_file) in
           let _ = log_and_print "[%s] decompressed bif file %d bytes\n" cbf_file sz in
           cache_file
-        else
+        else if String.sub bif_file 0 4 = "zip:" then begin
+            bif_file
+        end else
           bf
       end
     end in

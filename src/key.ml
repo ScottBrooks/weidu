@@ -214,8 +214,11 @@ let other_path_separators = Str.regexp "[:\\]"
 let bif_of_resource key name ext =
   let res = find_resource key name ext in
   let bif = key.biff.(res.bif_index) in
-  let filename =
-    Str.global_replace other_path_separators "/" bif.filename in
+
+  let filename = (match String.sub bif.filename 0 4 with
+    | "zip:" -> bif.filename
+    | _ -> Str.global_replace other_path_separators "/" bif.filename) in
+
   (filename,res.other_index,res.tis_index)
 
 let bif_exists_in_key key name =
@@ -326,3 +329,27 @@ let remove_files key file_lst =
    resource = new_resource;
  }
 
+let merge_key key file =
+    let keybuf = load_file ("zip:" ^ file ^ ":mod.key") in
+    let modkey = load_key (file^":mod.key") keybuf in
+    let num_biff = Array.length key.biff in
+
+    let renamed_biffs = Array.map (fun b ->
+        let zipfname = "zip:" ^ file ^ ":" ^ b.filename in
+        {b with filename = zipfname}) modkey.biff in
+
+    let num_resource = Array.length key.resource + Array.length modkey.resource in
+    let new_resfind = Hashtbl.create (num_resource * 2) in
+
+    let new_biff = Array.append key.biff renamed_biffs in
+    let new_resource = Array.map (fun r ->
+        let new_biff_index = r.bif_index + num_biff in
+        let res = { r with bif_index = new_biff_index } in
+        let ext_str = ext_of_key res.res_type in
+        Hashtbl.add new_resfind (res.res_name,ext_str) res ;
+        res
+    ) modkey.resource in
+
+    let key = {key with biff = new_biff; resource = new_resource; resfind = new_resfind} in
+
+    key

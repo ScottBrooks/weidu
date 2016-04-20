@@ -36,6 +36,7 @@ and biff = {
     tilesets   : biff_tis array ;
     filename   : string ;
     compressed : bool ;
+    base_offset: int ;
   }
 
 (* create a biff from a bunch of components
@@ -233,7 +234,7 @@ let save_biff key filename components =
 
 (* reads 'size' bytes that would start at location 'start' in this BIFF
  * if it were not compressed! *)
-let read_compressed_biff_internal fd filename start size chunk_fun =
+let read_compressed_biff_internal fd filename start size chunk_fun base_offset =
   let cmp_offset = ref 12 in
   let unc_offset = ref 0 in
 
@@ -247,7 +248,7 @@ let read_compressed_biff_internal fd filename start size chunk_fun =
   let sizes_buff = String.create 8 in
   while not !finished do
     (* now we're looking at one block *)
-    let _ = Unix.lseek fd !cmp_offset Unix.SEEK_SET in
+    let _ = Unix.lseek fd (!cmp_offset + base_offset) Unix.SEEK_SET in
     my_read 8 fd sizes_buff filename ;
     let uncmplen = int_of_str_off sizes_buff 0 in
     let cmplen = int_of_str_off sizes_buff 4 in
@@ -268,7 +269,7 @@ let read_compressed_biff_internal fd filename start size chunk_fun =
       finished := true
     end else begin
       (* read this block *)
-      let _ = Unix.lseek fd (!cmp_offset+8) Unix.SEEK_SET in
+      let _ = Unix.lseek fd (!cmp_offset+8 + base_offset) Unix.SEEK_SET in
       let cmp_buff = String.create cmplen in
       my_read cmplen fd cmp_buff filename ;
       let uncmp = Cbif.uncompress cmp_buff 0 cmplen uncmplen in
@@ -304,27 +305,28 @@ let read_compressed_biff_internal fd filename start size chunk_fun =
   done ;
   ()
 
-let read_compressed_biff fd filename a b =
+let read_compressed_biff fd filename a b base_offset =
   let res = Buffer.create (b - a) in
   let chunk_fun str = Buffer.add_string res str in
-  read_compressed_biff_internal fd filename a b chunk_fun ;
+  read_compressed_biff_internal fd filename a b chunk_fun base_offset ;
   Buffer.contents res
 
-let load_compressed_biff filename size fd =
+let load_compressed_biff filename size fd base_offset =
   Stats.time "unmarshal compressed BIFF" (fun () ->
-    let header_buff = read_compressed_biff fd filename 0 20 in
+    let header_buff = read_compressed_biff fd filename 0 20 base_offset in
     let num_file_entry = int_of_str_off header_buff 8 in
     let num_tileset_entry = int_of_str_off header_buff 12 in
     let offset_file_entry = int_of_str_off header_buff 16 in
     let offset_tileset_entry = offset_file_entry + (num_file_entry * 16) in
     let table_len = offset_file_entry + (num_file_entry * 16) +
         (num_tileset_entry * 20) in
-    let table_buff = read_compressed_biff fd filename 0 table_len in
+    let table_buff = read_compressed_biff fd filename 0 table_len base_offset in
     let result =
       {
        fd = fd ;
        filename = filename ;
        compressed = true ;
+       base_offset = base_offset ;
        files = Array.init num_file_entry (fun i ->
          let off = offset_file_entry + (i * 16) in
          {
@@ -350,7 +352,7 @@ let load_compressed_biff filename size fd =
     result
                                          ) ()
 
-let load_normal_biff filename size fd buff =
+let load_normal_biff filename size fd buff base_offset =
   Stats.time "unmarshal BIFF" (fun () ->
     let num_file_entry = int_of_str_off buff 8 in
     let num_tileset_entry = int_of_str_off buff 12 in
@@ -359,13 +361,14 @@ let load_normal_biff filename size fd buff =
     let table_len = (num_file_entry * 16) +
         (num_tileset_entry * 20) in
     let buff = String.create table_len in
-    let _ = Unix.lseek fd offset_file_entry Unix.SEEK_SET in
+    let _ = Unix.lseek fd (offset_file_entry + base_offset) Unix.SEEK_SET in
     my_read table_len fd buff filename ;
     let result =
       {
        fd = fd ;
        filename = filename ;
        compressed = false ;
+       base_offset = base_offset ;
        files = Array.init num_file_entry (fun i ->
          let off = (i * 16) in
          {
@@ -391,24 +394,45 @@ let load_normal_biff filename size fd buff =
     result
                               ) ()
 
-let load_biff filename =
-  try
+let read_biff_header filename =
+  let zip_regexp = (Str.regexp "zip:") in
+
+  if Str.string_match zip_regexp filename 0 then begin
+    let len = String.length filename in
+    let chunks = (Str.split (Str.regexp ":") filename) in
+    let zipname = List.nth chunks 1 in
+    let filename = List.nth chunks 2 in
+
+    let fd = Case_ins.unix_openfile zipname [Unix.O_RDONLY] 0 in
+    let buff = zip_read fd filename 20 in
+    let base_offset = Unix.lseek fd 0 Unix.SEEK_CUR in
+    (0, fd, buff, base_offset - (String.length buff))
+  end else
     let stats = Case_ins.unix_stat filename in
     let size = stats.Unix.st_size in
     let fd = Case_ins.unix_openfile filename [Unix.O_RDONLY] 0 in
     let buff = String.create 20 in
     let _ = Unix.read fd buff 0 20 in
+    (size, fd, buff, 0)
+
+let load_biff filename =
+  try
+    let size, fd, buff, base_offset = read_biff_header filename in
+
     if String.length buff < 8 then begin
       failwith "not a valid BIFF file (wrong sig)"
     end ;
     (
      match String.sub buff 0 8 with
-       "BIFFV1  " -> load_normal_biff filename size fd buff
+       "BIFFV1  " -> load_normal_biff filename size fd buff base_offset
            (* comment out this BIFC line if you don't have zlib *)
-     | "BIFCV1.0" -> load_compressed_biff filename size fd
+     | "BIFCV1.0" -> load_compressed_biff filename size fd base_offset
      | s -> failwith ("BIFF file signature unsupported: " ^ s)
     )
   with e ->
+    if String.sub filename 0 4 = "zip:" then
+
+
     log_and_print "ERROR: BIFF [%s] cannot be loaded: %s\n" filename
       (printexc_to_string e);
     raise e
@@ -433,9 +457,9 @@ let extract_file biff i ign =
     let this = biff.files.(i) in
     let size = this.res_size in
     if (biff.compressed) then begin
-      read_compressed_biff biff.fd biff.filename this.res_offset size
+      read_compressed_biff biff.fd biff.filename this.res_offset size biff.base_offset
     end else begin
-      let _ = Unix.lseek biff.fd this.res_offset Unix.SEEK_SET in
+      let _ = Unix.lseek biff.fd (this.res_offset + biff.base_offset)  Unix.SEEK_SET in
       let buff = String.create size in
       my_read size biff.fd buff biff.filename ;
       buff
@@ -452,9 +476,9 @@ let extract_tis biff i ign =
     let size = this.tis_number_of_tiles * this.tis_size_of_one_tile in
     let buff =
       if (biff.compressed) then begin
-        read_compressed_biff biff.fd biff.filename this.tis_offset size
+        read_compressed_biff biff.fd biff.filename this.tis_offset size biff.base_offset
       end else begin
-        let _ = Unix.lseek biff.fd this.tis_offset Unix.SEEK_SET in
+        let _ = Unix.lseek biff.fd (this.tis_offset + biff.base_offset) Unix.SEEK_SET in
         let buff = String.create size in
         my_read size biff.fd buff biff.filename;
         buff
@@ -504,7 +528,7 @@ let copy_file biff i oc is_tis =
     let copy_chunk str = output_string oc str in
     if (biff.compressed) then begin
       read_compressed_biff_internal
-        biff.fd biff.filename offset size copy_chunk
+        biff.fd biff.filename offset size copy_chunk 0
     end else begin
       let _ = Unix.lseek biff.fd offset Unix.SEEK_SET in
       let chunk_size = 10240 in
