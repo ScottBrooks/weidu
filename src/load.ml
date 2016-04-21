@@ -379,6 +379,7 @@ let merge_mod_keys info mod_paths =
     let newkey = List.fold_left (fun key path ->
         let modpath = Arch.native_separator ( game_path ^ "/" ^ path ) in
         let file = find_file_in_path modpath ".*\\.zip" in
+        log_only "Searching %s for mods\n" modpath;
         if file_exists file then begin
             Key.merge_key key file
         end else

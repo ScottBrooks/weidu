@@ -330,6 +330,7 @@ let remove_files key file_lst =
  }
 
 let merge_key key file =
+    log_only "Loading mod zip: %s\n" file;
     let keybuf = load_file ("zip:" ^ file ^ ":mod.key") in
     let modkey = load_key (file^":mod.key") keybuf in
     let num_biff = Array.length key.biff in
@@ -350,6 +351,7 @@ let merge_key key file =
         res
     ) modkey.resource in
 
+    log_only "   Added %d biffs, %d resources\n" ((Array.length new_biff) - (Array.length key.biff)) (Array.length new_resource);
     let key = {key with biff = new_biff; resource = new_resource; resfind = new_resfind} in
 
     key
