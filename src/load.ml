@@ -24,7 +24,7 @@ type game_type = BGEE | BG2EE | IWDEE | GENERIC
 
 let game_paths = ref []
 
-let mod_paths = ref ["dlc"]
+let mod_paths = ref ["dlc";""]
 
 let add_game_path path = game_paths := (Str.global_replace (Str.regexp "[\\\\/]*$") "" path) :: !game_paths
 
