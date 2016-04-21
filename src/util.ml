@@ -529,11 +529,7 @@ let zip_read fd name max_bytes  =
     Unix.lseek fd (filesize - read_size) Unix.SEEK_SET;
 
     my_read read_size fd tail name ;
-    let signature = Bytes.make 4 '\000' in
-    Bytes.set signature 0 (Char.chr 0x50);
-    Bytes.set signature 1 (Char.chr 0x4b);
-    Bytes.set signature 2 (Char.chr 0x05);
-    Bytes.set signature 3 (Char.chr 0x06);
+    let signature = "\x50\x4b\x05\x06" in
 
     let eocd_offset = Str.search_backward (Str.regexp signature) tail read_size in
 
