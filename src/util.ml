@@ -522,11 +522,11 @@ let rec zip_read_entry fd buff offset remaining max_bytes name =
 let zip_read fd name max_bytes  =
   try
     let filesize = Unix.lseek fd 0 Unix.SEEK_END in
-    Unix.lseek fd 0 Unix.SEEK_SET;
     let max_eocd_size = 64 * 1024 in
     let read_size = min filesize max_eocd_size in
     let tail = String.make read_size '\000' in
     let upperName = String.uppercase name in
+    Unix.lseek fd (filesize - read_size) Unix.SEEK_SET;
 
     my_read read_size fd tail name ;
     let signature = Bytes.make 4 '\000' in
