@@ -432,9 +432,6 @@ let load_biff filename =
      | s -> failwith ("BIFF file signature unsupported: " ^ s)
     )
   with e ->
-    if String.sub filename 0 4 = "zip:" then
-
-
     log_and_print "ERROR: BIFF [%s] cannot be loaded: %s\n" filename
       (printexc_to_string e);
     raise e
