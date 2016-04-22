@@ -399,9 +399,11 @@ let read_biff_header filename =
 
   if Str.string_match zip_regexp filename 0 then begin
     let len = String.length filename in
-    let chunks = (Str.split (Str.regexp ":") filename) in
-    let zipname = List.nth chunks 1 in
-    let filename = List.nth chunks 2 in
+
+    let zip_and_path = String.sub filename 4 (len - 4) in
+    let last_colon = String.rindex zip_and_path ':' in
+    let zipname = Str.string_before zip_and_path last_colon in
+    let filename = Str.string_after zip_and_path (last_colon + 1) in
 
     let fd = Case_ins.unix_openfile zipname [Unix.O_RDONLY] 0 in
     let buff = zip_read fd filename 20 in

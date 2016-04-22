@@ -553,9 +553,10 @@ let load_file_internal name max_bytes =
     String.copy (Hashtbl.find inlined_files (Arch.backslash_to_slash name))
   else if Str.string_match zip_regexp name 0 then begin
     let len = String.length name in
-    let chunks = (Str.split (Str.regexp ":") name) in
-    let zipname = List.nth chunks 1 in
-    let filename = List.nth chunks 2 in
+    let zip_and_path = String.sub name 4 (len - 4) in
+    let last_colon = String.rindex zip_and_path ':' in
+    let zipname = Str.string_before zip_and_path last_colon in
+    let filename = Str.string_after zip_and_path (last_colon + 1) in
 
     (* Open zipname, track down filename, return those bytes *)
     try begin
