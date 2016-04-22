@@ -350,7 +350,7 @@ let file_size name =
     stats.Unix.st_size 
   with _ ->  -1
 
-let file_exists name = (file_size name >= 0) 
+let file_exists name = Sys.file_exists name
 
 let is_directory name =
   try
