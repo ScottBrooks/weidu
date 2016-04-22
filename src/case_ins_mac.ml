@@ -19,6 +19,7 @@ let unix_mkdir s p = Unix.mkdir (backslash_to_slash s) p ;;
 let unix_opendir s = Unix.opendir (backslash_to_slash s) ;;
 let unix_rename s d = Unix.rename (backslash_to_slash s) (backslash_to_slash d);;
 let unix_rmdir s = Unix.rmdir (backslash_to_slash s);;
+let unix_stat64 s = Unix.LargeFile.stat (backslash_to_slash s) ;;
 
 let sys_readdir s = Sys.readdir (backslash_to_slash s);;
 
