@@ -501,7 +501,7 @@ let rec zip_read_entry fd buff offset remaining max_bytes name =
     let znamelen = short_of_str_off buff (28 + offset) in
     let zname = String.sub buff (46 + offset) znamelen in
     let znamereg = Str.regexp_case_fold ("^" ^ zname ^ "$") in
-    let zdataoffset = int_of_str_off buff (42 + offset) in
+    let zdataoffset = int32_of_str_off buff (42 + offset) in
     let zcompsize = int_of_str_off buff (20 + offset) in
 
     if Str.string_match znamereg name 0 then
@@ -511,7 +511,7 @@ let rec zip_read_entry fd buff offset remaining max_bytes name =
         zcompsize in
 
       let buff = String.make bytes_to_read '\000' in
-      Unix.lseek fd (zdataoffset + 30 + znamelen + zextralen) Unix.SEEK_SET;
+      Unix.LargeFile.lseek fd (Int64.add (Int64.of_int32 zdataoffset) (Int64.of_int (30 + znamelen + zextralen))) Unix.SEEK_SET;
       my_read bytes_to_read fd buff zname ;
       buff
     else
@@ -521,24 +521,25 @@ let rec zip_read_entry fd buff offset remaining max_bytes name =
 
 let zip_read fd name max_bytes  =
   try
-    let filesize = Unix.lseek fd 0 Unix.SEEK_END in
+    let filesize = Unix.LargeFile.lseek fd Int64.zero Unix.SEEK_END in
     let max_eocd_size = 64 * 1024 in
-    let read_size = min filesize max_eocd_size in
+    let read_size = Int64.to_int (min filesize (Int64.of_int max_eocd_size)) in
     let tail = String.make read_size '\000' in
     let upperName = String.uppercase name in
-    Unix.lseek fd (filesize - read_size) Unix.SEEK_SET;
+    let seek_location = Int64.sub filesize (Int64.of_int read_size) in
+    Unix.LargeFile.lseek fd seek_location Unix.SEEK_SET;
 
     my_read read_size fd tail name ;
     let signature = "\x50\x4b\x05\x06" in
 
     let eocd_offset = Str.search_backward (Str.regexp signature) tail read_size in
 
-    let ecd_offset = int_of_str_off tail (eocd_offset + 16) in
+    let ecd_offset = int32_of_str_off tail (eocd_offset + 16) in
     let ecd_size = int_of_str_off tail (eocd_offset + 12) in
     let ecd_count = short_of_str_off tail (eocd_offset + 10) in
 
     let ecd = String.make ecd_size '\000' in
-    Unix.lseek fd ecd_offset Unix.SEEK_SET;
+    Unix.LargeFile.lseek fd (Int64.of_int32 ecd_offset) Unix.SEEK_SET;
 
     my_read ecd_size fd ecd name ;
 
@@ -561,12 +562,12 @@ let load_file_internal name max_bytes =
     (* Open zipname, track down filename, return those bytes *)
     try begin
       Stats.time "loading files" (fun () ->
-        let stats = Case_ins.unix_stat zipname in
-        let size = stats.Unix.st_size in
-        if size = 0 then
+        let stats = Case_ins.unix_stat64 zipname in
+        let size = stats.Unix.LargeFile.st_size in
+        if size = Int64.zero then
           log_or_print_modder "WARNING: [%s] is a 0 byte file\n" zipname
-        else if size < 0 then begin
-          log_and_print "ERROR: [%s] has reported size %d\n" zipname size ;
+        else if size < Int64.zero then begin
+          log_and_print "ERROR: [%s] has reported size less then 0\n" zipname ;
           failwith ("error loading " ^ zipname)
         end ;
         let fd = Case_ins.unix_openfile zipname [Unix.O_RDONLY] 0 in
@@ -577,11 +578,11 @@ let load_file_internal name max_bytes =
           with e ->
             log_and_print "ERROR: load_file failed to close %s\n" name ;
           raise e) ;
-        log_only "[%s] loaded, %d bytes\n" name size ;
+        log_only "[%s] loaded\n" name ;
         buff) ();
     end
     with e ->
-      log_and_print "ERROR: error loading [%s]\n" name ;
+      log_and_print "ERROR: error loading [%s] %s\n" name (printexc_to_string e);
       raise e
     failwith ("now do something with it")
   end else
